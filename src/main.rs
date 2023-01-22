@@ -1,8 +1,9 @@
 use reqwest::{Client, Url};
 use scraper::{Html, Selector};
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::time::Duration;
 
+/// Creates and returns a web Client instance from Reqwest crate.
 fn create_request_client() -> Client {
     Client::builder()
         .connect_timeout(Duration::from_secs(5))
@@ -38,7 +39,7 @@ async fn request(client: &Client, url: &Url) -> Option<String> {
 //     text
 // }
 
-fn find_links(html: &String, url: &Url) -> Vec<String> {
+fn find_links(html: &String, url: &Url) -> Vec<Url> {
     let document = Html::parse_document(html);
     let href_selector = Selector::parse("a").unwrap();
 
@@ -68,35 +69,100 @@ fn find_links(html: &String, url: &Url) -> Vec<String> {
             }
             Some(href.to_string())
         })
+        .map(|url_string| {
+            let mut url = Url::parse(&url_string).expect("should create valid URL");
+            url.set_fragment(None);
+            url.set_query(None);
+            url
+        })
         .collect()
 }
 
 #[tokio::main]
 async fn main() {
-    let client = create_request_client();
+    // TODO: load startup urls from a file
+    // TODO: loading error handling
+    // TODO: parallelization
+    // TODO: 4xx Too Many Requests
 
-    let mut queue = VecDeque::new();
-    queue.push_back(String::from("https://en.wikipedia.org/wiki/Brussels"));
-
-    let mut visited: HashSet<String> = HashSet::new();
+    // basic settings
+    // let REQUEST_DELAY_SECONDS = 1;
+    const MAXIMUM_WEBSITES: u32 = 20;
     let mut counter: u32 = 0;
 
-    while 0 < queue.len() && queue.len() < 9999 {
-        // get the oldest value from the queue
-        let url = queue.pop_front().unwrap();
-        let url = Url::parse(&url).unwrap();
+    let mut init_queue: Vec<String> = Vec::new();
+    init_queue.push(String::from("https://en.wikipedia.org/wiki/Brussels"));
+    init_queue.push(String::from("https://www.nytimes.com/"));
 
-        // print some status
-        counter += 1;
-        println!("Page #{} / {}: {}", counter, queue.len(), url);
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut yet_to_visit = Vec::with_capacity(1000);
 
-        // request the document
+    let client = create_request_client();
+
+    // request startup pages and add new links to the yet-to-visit list
+    for (i, startup_url) in init_queue.iter().enumerate() {
+        println!("Requesting startup page #{}: {}", i + 1, startup_url);
+        let mut url = Url::parse(&startup_url).unwrap();
+        url.set_fragment(None);
+
+        visited.insert(url.as_str().to_string());
+
         let html = request(&client, &url).await.unwrap();
-        // parse the document and iterate over the links
-        for link in find_links(&html, &url) {
-            if visited.insert(sha256::digest(link.clone())) {
-                queue.push_back(link);
+        // parse the HTML document and add links to the yet-to-visit list
+        for another_url in find_links(&html, &url) {
+            if !visited.contains(&another_url.as_str().to_string()) {
+                yet_to_visit.push(another_url);
             }
+        }
+    }
+
+    // now, the main and long loop
+    while yet_to_visit.len() > 0 && counter < MAXIMUM_WEBSITES {
+        // pick one url from the yet-to-visit list
+        let domain = yet_to_visit.first().unwrap().domain().unwrap().to_owned();
+
+        let mut urls_with_same_domain: Vec<Url> = Vec::new();
+
+        // filter out all URLs with the same domain - remove them from the yet-to-visit list
+        let mut i = 0;
+        while i < yet_to_visit.len() {
+            if yet_to_visit[i].domain().unwrap() == domain {
+                urls_with_same_domain.push(yet_to_visit.swap_remove(i));
+            } else {
+                i += 1;
+            }
+        }
+
+        // fetch all the urls with the same domain
+        let mut same_domain_counter = 0;
+        while urls_with_same_domain.len() > 0 {
+            let url = urls_with_same_domain.pop().unwrap();
+            // request the document
+            let html = request(&client, &url).await.unwrap();
+            visited.insert(url.as_str().to_string());
+            counter += 1;
+            same_domain_counter += 1;
+            println!(
+                "Requesting {} ({} on domain {}) {}",
+                counter,
+                same_domain_counter,
+                domain,
+                url.path()
+            );
+
+            // parse the document and iterate over the links
+            for another_url in find_links(&html, &url) {
+                if visited.contains(&another_url.to_string()) {
+                    continue;
+                }
+                if another_url.domain().unwrap() == domain {
+                    urls_with_same_domain.push(another_url);
+                } else {
+                    yet_to_visit.push(another_url);
+                }
+            }
+
+            // TODO: wait some time
         }
     }
 }
