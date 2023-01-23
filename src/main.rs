@@ -2,6 +2,7 @@ use reqwest::{Client, Url};
 use scraper::{Html, Selector};
 use std::collections::HashSet;
 use std::time::Duration;
+use texting_robots::{get_robots_url, Robot};
 
 /// Creates and returns a web Client instance from Reqwest crate.
 fn create_request_client() -> Client {
@@ -133,10 +134,32 @@ async fn main() {
             }
         }
 
+        // fetch and parse robots.txt
+        let robots_url = get_robots_url(format!("https://{}", domain).as_str());
+        if robots_url.is_err() {
+            // ParseError occurred
+			println!("Error finding robots.txt for domain {}", domain);
+            continue;
+        }
+        let robots_url = Url::parse(robots_url.unwrap().as_str()).unwrap();
+        let robots_txt = request(&client, &robots_url).await.unwrap();
+        let robot = Robot::new("alex-observer/0.1.0", robots_txt.as_bytes());
+        if robot.is_err() {
+            // error parsing the robots.txt
+			println!("Error parsing robots.txt for domain {}", domain);
+            continue;
+        }
+        let robot = robot.unwrap();
+
         // fetch all the urls with the same domain
         let mut same_domain_counter = 0;
         while urls_with_same_domain.len() > 0 {
             let url = urls_with_same_domain.pop().unwrap();
+			// check if the URL is allowed to crawl in robots.txt
+            if !robot.allowed(url.path()) {
+                continue;
+            }
+
             // request the document
             let html = request(&client, &url).await.unwrap();
             visited.insert(url.as_str().to_string());
