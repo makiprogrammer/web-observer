@@ -138,7 +138,7 @@ async fn main() {
         let robots_url = get_robots_url(format!("https://{}", domain).as_str());
         if robots_url.is_err() {
             // ParseError occurred
-			println!("Error finding robots.txt for domain {}", domain);
+            println!("Error finding robots.txt for domain {}", domain);
             continue;
         }
         let robots_url = Url::parse(robots_url.unwrap().as_str()).unwrap();
@@ -146,16 +146,16 @@ async fn main() {
         let robot = Robot::new("alex-observer/0.1.0", robots_txt.as_bytes());
         if robot.is_err() {
             // error parsing the robots.txt
-			println!("Error parsing robots.txt for domain {}", domain);
+            println!("Error parsing robots.txt for domain {}", domain);
             continue;
         }
         let robot = robot.unwrap();
 
         // fetch all the urls with the same domain
         let mut same_domain_counter = 0;
-        while urls_with_same_domain.len() > 0 {
+        while urls_with_same_domain.len() > 0 && counter < MAXIMUM_WEBSITES {
             let url = urls_with_same_domain.pop().unwrap();
-			// check if the URL is allowed to crawl in robots.txt
+            // check if the URL is allowed by robots.txt
             if !robot.allowed(url.path()) {
                 continue;
             }
