@@ -6,6 +6,21 @@ use texting_robots::{get_robots_url, Robot};
 
 const MAXIMUM_CRAWLED_WEBSITES: usize = 99999;
 
+fn process_html_document(_content: String) {
+    // This is highly customizable function.
+    // Whole response body as text is passed as `content` parameter.
+    // A few examples for the usage: calling external function, training AI model,
+    // other types of text processing...
+
+    // To get useful, displayed text from HTML document, try this code:
+    // let document = Html::parse_document(html);
+    // let selector = Selector::parse("h1, h2, h3, h4, h5, h6, p").unwrap();
+    // let mut text = String::new();
+    // for element in document.select(&selector) {
+    //     text.push_str(&element.text().collect::<Vec<&str>>().join("\n"));
+    // }
+}
+
 enum CrawlerError {
     // ReqwestError(),
     // UrlParseError(),
@@ -40,7 +55,7 @@ impl Crawler {
         }
     }
 
-	/// Performs a HTTP request using crawler's client. Returns response text.
+    /// Performs a HTTP request using crawler's client. Returns response text.
     async fn request_website(&self, url: &Url) -> Option<String> {
         // create a request object and then execute it
         let req = self.client.get(url.to_string()).build();
@@ -48,8 +63,8 @@ impl Crawler {
             return None;
         }
         let req = req.unwrap();
-    	let response = self.client.execute(req).await;
-		if response.is_err() {
+        let response = self.client.execute(req).await;
+        if response.is_err() {
             return None;
         }
 
@@ -60,8 +75,8 @@ impl Crawler {
         Some(text.unwrap())
     }
 
-	/// Initializes the crawler with startup urls. Newly-found urls will
-	/// be added to yet-to-visit list.
+    /// Initializes the crawler with startup urls. Newly-found urls will
+    /// be added to yet-to-visit list.
     async fn init_crawl(&mut self, init_queue: &Vec<String>) -> () {
         for (i, startup_url) in init_queue.iter().enumerate() {
             println!("Requesting startup page #{}: {}", i + 1, startup_url);
@@ -70,23 +85,25 @@ impl Crawler {
 
             let html = self.request_website(&url).await;
             if html.is_none() {
-				continue;
+                continue;
             }
-			let html = html.unwrap();
-			self.visited.insert(url.as_str().to_string());
-			
+            let html = html.unwrap();
+            self.visited.insert(url.as_str().to_string());
+
             // parse the HTML document and add links to the yet-to-visit list
             for another_url in find_links(&html, &url) {
                 if !self.visited.contains(&another_url.as_str().to_string()) {
                     self.yet_to_visit.push(another_url);
                 }
             }
+
+            process_html_document(html);
         }
     }
 
-	/// Selects first url in the yet-to-visit url list and crawles all urls
-	/// with the same domain. New urls are crawled if they have the same domain,
-	/// otherwise, they are added to yet-to-visit list.
+    /// Selects first url in the yet-to-visit url list and crawles all urls
+    /// with the same domain. New urls are crawled if they have the same domain,
+    /// otherwise, they are added to yet-to-visit list.
     async fn one_domain_crawl(&mut self) -> Result<usize, CrawlerError> {
         if self.yet_to_visit.len() == 0 {
             return Ok(0);
@@ -174,22 +191,14 @@ impl Crawler {
                 }
             }
 
+            process_html_document(html);
+
             // TODO: wait some time
         }
 
         Ok(same_domain_counter)
     }
 }
-
-// fn html_document_to_text(html: &String) -> String {
-//     let document = Html::parse_document(html);
-//     let selector = Selector::parse("h1, h2, h3, h4, h5, h6, p").unwrap();
-//     let mut text = String::new();
-//     for element in document.select(&selector) {
-//         text.push_str(&element.text().collect::<Vec<&str>>().join("\n"));
-//     }
-//     text
-// }
 
 fn find_links(html: &String, url: &Url) -> Vec<Url> {
     let document = Html::parse_document(html);
