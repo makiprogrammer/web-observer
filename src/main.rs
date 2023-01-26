@@ -1,11 +1,16 @@
 use reqwest::{Client, Url};
 use scraper::{Html, Selector};
 use std::collections::HashSet;
+use std::env;
+use std::fs;
+use std::thread;
 use std::time::Duration;
 use texting_robots::{get_robots_url, Robot};
 
 const MAXIMUM_CRAWLED_WEBSITES: usize = 99999;
+const REQUEST_DELAY: Duration = Duration::from_millis(500);
 
+/// Arbitrary processing function.
 fn process_html_document(_content: String) {
     // This is highly customizable function.
     // Whole response body as text is passed as `content` parameter.
@@ -22,8 +27,6 @@ fn process_html_document(_content: String) {
 }
 
 enum CrawlerError {
-    // ReqwestError(),
-    // UrlParseError(),
     RobotsTxtError(String),
     RobotsTxtParseError(String),
 }
@@ -193,13 +196,16 @@ impl Crawler {
 
             process_html_document(html);
 
-            // TODO: wait some time
+            // wait some friendly time in between requests
+            thread::sleep(REQUEST_DELAY);
         }
 
         Ok(same_domain_counter)
     }
 }
 
+/// Helper function. Given a HTML `&String` representation, returns a vector of `Url`s
+/// referenced in the `String` argument.
 fn find_links(html: &String, url: &Url) -> Vec<Url> {
     let document = Html::parse_document(html);
     let href_selector = Selector::parse("a").unwrap();
@@ -241,16 +247,36 @@ fn find_links(html: &String, url: &Url) -> Vec<Url> {
 
 #[tokio::main]
 async fn main() {
-    // TODO: load startup urls from a file
-    // TODO: loading error handling
-    // TODO: parallelization
+    // TODO: parallelization - using threads with shared memory? or by messaging?
     // TODO: 4xx Too Many Requests
+    // TODO: add unit tests
 
-    let mut init_queue: Vec<String> = Vec::new();
-    init_queue.push(String::from("https://alantrotter.com/"));
-    // init_queue.push(String::from("https://en.wikipedia.org/wiki/Brussels"));
-    // init_queue.push(String::from("https://www.nytimes.com/"));
+    // read the env arguments
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        println!("This program requires an input file with initial URLs.");
+        println!("Usage: {} <input_file_path>", args[0]);
+        return;
+    }
+    let input_file_path = &args[1];
+    let init_queue = fs::read_to_string(input_file_path);
+    if init_queue.is_err() {
+        let error = init_queue.err().unwrap();
+        println!(
+            "Error reading input file: {}\n{}",
+            input_file_path,
+            error.to_string()
+        );
+        return;
+    }
+    let init_queue: Vec<String> = init_queue
+        .unwrap()
+        .split('\n')
+        .map(&str::to_string)
+        .collect();
+    println!("Input file loaded successfully.");
 
+    // startup the crawler
     let mut crawler = Crawler::new();
     crawler.init_crawl(&init_queue).await;
 
