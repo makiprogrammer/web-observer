@@ -1,6 +1,7 @@
 # Observer web crawler
 
-A simple web crawler. For more details, see [Crawling mechanism](#crawling-mechanism) section
+A simple web crawler for static and server-side rendered websites.
+For more details, see [Crawling mechanism](#crawling-mechanism) section
 or detailed [Documentation](#documentation). The crawler takes a list of initial websites
 and then follows links in `<a href="">` html tags. The crawler is able to respect rules specified
 in `robots.txt`. Currently, parallelization is not supported, but it is planned to be added in the future.

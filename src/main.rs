@@ -82,10 +82,18 @@ impl Crawler {
     /// be added to yet-to-visit list.
     async fn init_crawl(&mut self, init_queue: &Vec<String>) -> () {
         for (i, startup_url) in init_queue.iter().enumerate() {
-            println!("Requesting startup page #{}: {}", i + 1, startup_url);
-            let mut url = Url::parse(&startup_url).unwrap();
+            if startup_url.is_empty() {
+                continue;
+            }
+            let url = Url::parse(&startup_url);
+            if url.is_err() {
+                println!("Invalid URL: {}", startup_url);
+                continue;
+            }
+            let mut url = url.unwrap();
             url.set_fragment(None);
 
+            println!("Requesting startup page #{}: {}", i + 1, startup_url);
             let html = self.request_website(&url).await;
             if html.is_none() {
                 continue;
@@ -108,18 +116,13 @@ impl Crawler {
     /// with the same domain. New urls are crawled if they have the same domain,
     /// otherwise, they are added to yet-to-visit list.
     async fn one_domain_crawl(&mut self) -> Result<usize, CrawlerError> {
-        if self.yet_to_visit.len() == 0 {
+        let first = self.yet_to_visit.first();
+        if first.is_none() {
             return Ok(0);
         }
 
-        // pick one domain from the yet-to-visit list
-        let domain = self
-            .yet_to_visit
-            .first()
-            .unwrap()
-            .domain()
-            .unwrap()
-            .to_owned();
+        // copy the domain of the first URL to owned string
+        let domain = first.unwrap().domain().unwrap().to_owned();
 
         let mut urls_with_same_domain: Vec<Url> = Vec::new();
         // filter out all URLs with the same domain - remove them from the yet-to-visit list
@@ -154,8 +157,11 @@ impl Crawler {
 
         // fetch all the urls with the same domain
         let mut same_domain_counter: usize = 0;
-        while urls_with_same_domain.len() > 0 && self.counter < MAXIMUM_CRAWLED_WEBSITES {
-            let url = urls_with_same_domain.pop().unwrap();
+
+        while let Some(url) = urls_with_same_domain.pop() {
+            if self.counter >= MAXIMUM_CRAWLED_WEBSITES {
+                break; // we've reached maximum number of crawled websites
+            }
 
             // important: check if the URL is allowed by robots.txt
             if !robot.allowed(url.path()) {
@@ -163,7 +169,7 @@ impl Crawler {
             }
 
             // request the document
-            print!(
+            println!(
                 "Requesting {} ({} on domain {}) {} ",
                 self.counter,
                 same_domain_counter,
@@ -176,7 +182,6 @@ impl Crawler {
                 continue;
             }
             let html = html.unwrap();
-            println!("Done!");
 
             self.visited.insert(url.as_str().to_string());
             self.counter += 1;
@@ -204,9 +209,9 @@ impl Crawler {
     }
 }
 
-/// Helper function. Given a HTML `&String` representation, returns a vector of `Url`s
-/// referenced in the `String` argument.
-fn find_links(html: &String, url: &Url) -> Vec<Url> {
+/// Helper function. Given a HTML string representation, returns a vector of `Url`s
+/// referenced in the string slice argument.
+fn find_links(html: &str, url: &Url) -> Vec<Url> {
     let document = Html::parse_document(html);
     let href_selector = Selector::parse("a").unwrap();
 
@@ -215,11 +220,7 @@ fn find_links(html: &String, url: &Url) -> Vec<Url> {
     document
         .select(&href_selector)
         .filter_map(|element| {
-            let href = element.value().attr("href");
-            if href.is_none() {
-                return None;
-            };
-            let href = href.unwrap();
+            let href = element.value().attr("href")?;
 
             // skip fragments
             if href.starts_with("#") {
@@ -260,8 +261,7 @@ async fn main() {
     }
     let input_file_path = &args[1];
     let init_queue = fs::read_to_string(input_file_path);
-    if init_queue.is_err() {
-        let error = init_queue.err().unwrap();
+    if let Err(error) = init_queue {
         println!(
             "Error reading input file: {}\n{}",
             input_file_path,
