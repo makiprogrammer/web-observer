@@ -1,4 +1,4 @@
-use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use reqwest::{Client, Url};
 use scraper::{Html, Selector};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -10,6 +10,7 @@ use texting_robots::{get_robots_url, Robot};
 
 const MAXIMUM_WEBSITES_PER_DOMAIN: usize = 1;
 const REQUEST_DELAY: Duration = Duration::from_millis(250);
+const USER_AGENT: &str = "alex-observer/0.1.0";
 
 /// Arbitrary processing function.
 fn process_html_document(_content: String, _document: Html) {
@@ -27,7 +28,7 @@ fn process_html_document(_content: String, _document: Html) {
     // }
 }
 
-/// Heler struct for storing information abour visited domain.
+/// Helper struct for storing information abour visited domain.
 struct DomainInfo {
     /// Number of successfully visited websites with this domain.
     counter: usize,
@@ -59,13 +60,10 @@ struct Crawler {
 impl Crawler {
     /// Creates a new `Crawler` instance.
     fn new() -> Crawler {
-        let mut default_headers = HeaderMap::new();
-        default_headers.append(ACCEPT, "text/html".parse().unwrap());
         Crawler {
             client: Client::builder()
                 .connect_timeout(Duration::from_secs(5))
-                .user_agent("alex-observer/0.1.0")
-                .default_headers(default_headers)
+                .user_agent(USER_AGENT)
                 .build()
                 .expect("should create a request client"),
             visited: HashSet::new(),
@@ -78,7 +76,11 @@ impl Crawler {
     /// Performs a HTTP request using crawler's client. Returns response text.
     async fn request_website(&self, url: &Url) -> Option<String> {
         // create a request object and then execute it
-        let req = self.client.get(url.as_str()).build();
+        let req = self
+            .client
+            .get(url.as_str())
+            .header(ACCEPT, "text/html")
+            .build();
         if req.is_err() {
             return None;
         }
@@ -225,7 +227,7 @@ impl Crawler {
             return None;
         }
         let robots_txt = robots_txt.unwrap();
-        let robot = Robot::new("alex-observer/0.1.0", robots_txt.as_bytes());
+        let robot = Robot::new(USER_AGENT, robots_txt.as_bytes());
         if robot.is_err() {
             // error parsing the robots.txt
             return None;
@@ -245,6 +247,7 @@ impl Crawler {
 /// First value is parsed `scraper::Html` document, second value is a vector of `Url`s
 /// referenced in the string slice argument.
 fn find_links(html: &str, url: &Url) -> (Html, Vec<Url>) {
+    // we could also use Regex url pattern, but I think the document parsing is better
     let document = Html::parse_document(html);
     let href_selector = Selector::parse("a").unwrap();
 
