@@ -1,3 +1,4 @@
+use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE};
 use reqwest::{Client, Url};
 use scraper::{Html, Selector};
 use std::collections::HashSet;
@@ -46,10 +47,13 @@ struct Crawler {
 impl Crawler {
     /// Creates a new `Crawler` instance.
     fn new() -> Crawler {
+        let mut default_headers = HeaderMap::new();
+        default_headers.append(ACCEPT, "text/html".parse().unwrap());
         Crawler {
             client: Client::builder()
                 .connect_timeout(Duration::from_secs(5))
                 .user_agent("alex-observer/0.1.0")
+                .default_headers(default_headers)
                 .build()
                 .expect("should create a request client"),
             visited: HashSet::new(),
@@ -70,8 +74,17 @@ impl Crawler {
         if response.is_err() {
             return None;
         }
+        let response = response.unwrap();
+        let content_type = response.headers().get(CONTENT_TYPE);
+        if content_type.is_none() {
+            return None; // the content-type header was not provided, sadly
+        }
+        let content_type = content_type.unwrap();
+        if content_type != &"text/html" {
+            return None; // we recieved different content-type, but we understand only "text/html"
+        }
 
-        let text = response.unwrap().text().await;
+        let text = response.text().await;
         if text.is_err() {
             return None;
         }
