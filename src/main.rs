@@ -11,14 +11,14 @@ const MAXIMUM_CRAWLED_WEBSITES: usize = 99999;
 const REQUEST_DELAY: Duration = Duration::from_millis(500);
 
 /// Arbitrary processing function.
-fn process_html_document(_content: String) {
+fn process_html_document(_content: String, _document: Html) {
     // This is highly customizable function.
-    // Whole response body as text is passed as `content` parameter.
+    // Whole response body as `String` is passed as `content` parameter.
+    // Parsed HTML document is passed as `document` parameter.
     // A few examples for the usage: calling external function, training AI model,
     // other types of text processing...
 
-    // To get useful, displayed text from HTML document, try this code:
-    // let document = Html::parse_document(html);
+    // To get useful displayed text from HTML document, try this code:
     // let selector = Selector::parse("h1, h2, h3, h4, h5, h6, p").unwrap();
     // let mut text = String::new();
     // for element in document.select(&selector) {
@@ -102,13 +102,14 @@ impl Crawler {
             self.visited.insert(url.as_str().to_string());
 
             // parse the HTML document and add links to the yet-to-visit list
-            for another_url in find_links(&html, &url) {
+            let (document, links) = find_links(&html, &url);
+            for another_url in links {
                 if !self.visited.contains(&another_url.as_str().to_string()) {
                     self.yet_to_visit.push(another_url);
                 }
             }
 
-            process_html_document(html);
+            process_html_document(html, document);
         }
     }
 
@@ -188,7 +189,8 @@ impl Crawler {
             same_domain_counter += 1;
 
             // parse the document and iterate over the links
-            for another_url in find_links(&html, &url) {
+            let (document, links) = find_links(&html, &url);
+            for another_url in links {
                 if self.visited.contains(&another_url.to_string()) {
                     continue;
                 }
@@ -199,7 +201,7 @@ impl Crawler {
                 }
             }
 
-            process_html_document(html);
+            process_html_document(html, document);
 
             // wait some friendly time in between requests
             thread::sleep(REQUEST_DELAY);
@@ -209,15 +211,16 @@ impl Crawler {
     }
 }
 
-/// Helper function. Given a HTML string representation, returns a vector of `Url`s
+/// Helper function. Given a HTML string representation, returns a tuple.
+/// First value is parsed `scraper::Html` document, second value is a vector of `Url`s
 /// referenced in the string slice argument.
-fn find_links(html: &str, url: &Url) -> Vec<Url> {
+fn find_links(html: &str, url: &Url) -> (Html, Vec<Url>) {
     let document = Html::parse_document(html);
     let href_selector = Selector::parse("a").unwrap();
 
     let domain = url.domain().unwrap();
 
-    document
+    let links = document
         .select(&href_selector)
         .filter_map(|element| {
             let href = element.value().attr("href")?;
@@ -243,7 +246,9 @@ fn find_links(html: &str, url: &Url) -> Vec<Url> {
             url.set_query(None);
             url
         })
-        .collect()
+        .collect();
+
+    (document, links)
 }
 
 #[tokio::main]
