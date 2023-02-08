@@ -249,7 +249,7 @@ impl Crawler {
 fn find_links(html: &str, url: &Url) -> (Html, Vec<Url>) {
     // we could also use Regex url pattern, but I think the document parsing is better
     let document = Html::parse_document(html);
-    let href_selector = Selector::parse("a").unwrap();
+    let href_selector = Selector::parse("a, area, link").unwrap();
 
     let domain = url.domain().unwrap(); // safe to unwrap
 
@@ -257,6 +257,13 @@ fn find_links(html: &str, url: &Url) -> (Html, Vec<Url>) {
         .select(&href_selector)
         .filter_map(|element| {
             let href = element.value().attr("href")?;
+
+            // ignore stylesheets
+            if let Some(rel) = element.value().attr("rel") {
+                if rel == "stylesheet" {
+                    return None;
+                }
+            }
 
             // skip fragments
             if href.starts_with("#") {
