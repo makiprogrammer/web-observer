@@ -28,7 +28,7 @@ fn process_html_document(_content: String, _document: Html) {
     // }
 }
 
-/// Helper struct for storing information abour visited domain.
+/// Helper struct for storing information about visited domain.
 struct DomainInfo {
     /// Number of successfully visited websites with this domain.
     counter: usize,
@@ -75,31 +75,43 @@ impl Crawler {
 
     /// Performs a HTTP request using crawler's client. Returns response text.
     async fn request_website(&self, url: &Url) -> Option<String> {
-        // create a request object and then execute it
+        // since the response can be arbitrary, we try to make a HEAD request first
+        // to determine the Content-Type header - should be "text/html" only
+        // and we profit from the speed of HEAD over GET
+        let req = self
+            .client
+            .head(url.as_str())
+            .header(ACCEPT, "text/html")
+            .build()
+            .unwrap();
+        // safe to unwrap (already a valid url)
+        let res = self.client.execute(req).await;
+        if res.is_err() {
+            return None; // something bad happened during the request
+        }
+        let res = res.unwrap(); // safe to unwrap
+        let content_type = res.headers().get(CONTENT_TYPE);
+        if let Some(content_type) = content_type {
+            if !content_type.to_str().unwrap().starts_with("text/html") {
+                return None; // we received different Content-Type than "text/html"
+            }
+        } else {
+            return None; // the content-type header was not provided, sadly
+        }
+
+        // create a GET request object and then execute it
         let req = self
             .client
             .get(url.as_str())
             .header(ACCEPT, "text/html")
-            .build();
-        if req.is_err() {
-            return None;
+            .build()
+            .unwrap(); // safe to unwrap, because the URL is valid
+        let res = self.client.execute(req).await;
+        if res.is_err() {
+            return None; // something bad happened during the request
         }
-        let req = req.unwrap();
-        let response = self.client.execute(req).await;
-        if response.is_err() {
-            return None;
-        }
-        let response = response.unwrap();
-        let content_type = response.headers().get(CONTENT_TYPE);
-        if content_type.is_none() {
-            return None; // the content-type header was not provided, sadly
-        }
-        let content_type = content_type.unwrap();
-        if !content_type.to_str().unwrap().starts_with("text/html") {
-            return None; // we recieved different content-type, but we understand only "text/html"
-        }
-
-        let text = response.text().await;
+        let res = res.unwrap();
+        let text = res.text().await;
         if text.is_err() {
             return None;
         }
@@ -145,7 +157,7 @@ impl Crawler {
         }
     }
 
-    /// This is the main crawling funciton. Websites are fetched according
+    /// This is the main crawling function. Websites are fetched according
     /// to their order in the yet-to-visit queue. Content in `robots.txt`
     /// is cached. There is a `MAXIMUM_WEBSITES_PER_DOMAIN` limit for every domain,
     /// because some domains contain A LOT of websites (news, blogs, wiki...)
