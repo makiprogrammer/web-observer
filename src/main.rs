@@ -8,7 +8,7 @@ use std::thread;
 use std::time::Duration;
 use texting_robots::{get_robots_url, Robot};
 
-const MAXIMUM_WEBSITES_PER_DOMAIN: usize = 1;
+const MAXIMUM_WEBSITES_PER_DOMAIN: usize = 256;
 const REQUEST_DELAY: Duration = Duration::from_millis(250);
 const USER_AGENT: &str = "alex-observer/0.1.0";
 
