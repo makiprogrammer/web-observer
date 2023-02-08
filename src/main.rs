@@ -1,15 +1,15 @@
 use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE};
 use reqwest::{Client, Url};
 use scraper::{Html, Selector};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::fs;
 use std::thread;
 use std::time::Duration;
 use texting_robots::{get_robots_url, Robot};
 
-const MAXIMUM_CRAWLED_WEBSITES: usize = 99999;
-const REQUEST_DELAY: Duration = Duration::from_millis(500);
+const MAXIMUM_WEBSITES_PER_DOMAIN: usize = 1;
+const REQUEST_DELAY: Duration = Duration::from_millis(250);
 
 /// Arbitrary processing function.
 fn process_html_document(_content: String, _document: Html) {
@@ -27,9 +27,19 @@ fn process_html_document(_content: String, _document: Html) {
     // }
 }
 
-enum CrawlerError {
-    RobotsTxtError(String),
-    RobotsTxtParseError(String),
+/// Heler struct for storing information abour visited domain.
+struct DomainInfo {
+    /// Number of successfully visited websites with this domain.
+    counter: usize,
+    /// Parsed `Robot` struct (optional). If not present, every URL is allowed.
+    robot: Option<Robot>,
+}
+
+impl DomainInfo {
+    /// Decides whether the maximum number of websites for this domain has been reached.
+    fn reached_limit(&self) -> bool {
+        self.counter >= MAXIMUM_WEBSITES_PER_DOMAIN
+    }
 }
 
 /// Main crawling structure capable of crawling the web.
@@ -38,8 +48,10 @@ struct Crawler {
     client: Client,
     /// Set of all already-visited URLs stored as strings.
     visited: HashSet<String>,
-    /// List of all URLs that are yet to be visited.
-    yet_to_visit: Vec<Url>,
+    /// Queue of all URLs that are yet to be visited.
+    yet_to_visit: VecDeque<Url>,
+    /// Hash map containing information about visited domains, including parsed `robots.txt`.
+    domains: HashMap<String, DomainInfo>,
     /// Number of websites that have been crawled (not domains).
     counter: usize,
 }
@@ -57,7 +69,8 @@ impl Crawler {
                 .build()
                 .expect("should create a request client"),
             visited: HashSet::new(),
-            yet_to_visit: Vec::with_capacity(100),
+            yet_to_visit: VecDeque::new(),
+            domains: HashMap::new(),
             counter: 0,
         }
     }
@@ -65,7 +78,7 @@ impl Crawler {
     /// Performs a HTTP request using crawler's client. Returns response text.
     async fn request_website(&self, url: &Url) -> Option<String> {
         // create a request object and then execute it
-        let req = self.client.get(url.to_string()).build();
+        let req = self.client.get(url.as_str()).build();
         if req.is_err() {
             return None;
         }
@@ -80,7 +93,7 @@ impl Crawler {
             return None; // the content-type header was not provided, sadly
         }
         let content_type = content_type.unwrap();
-        if content_type != &"text/html" {
+        if !content_type.to_str().unwrap().starts_with("text/html") {
             return None; // we recieved different content-type, but we understand only "text/html"
         }
 
@@ -122,7 +135,7 @@ impl Crawler {
             let (document, links) = find_links(&html, &url);
             for another_url in links {
                 if !self.visited.contains(&another_url.as_str().to_string()) {
-                    self.yet_to_visit.push(another_url);
+                    self.yet_to_visit.push_back(another_url);
                 }
             }
 
@@ -130,67 +143,46 @@ impl Crawler {
         }
     }
 
-    /// Selects first url in the yet-to-visit url list and crawles all urls
-    /// with the same domain. New urls are crawled if they have the same domain,
-    /// otherwise, they are added to yet-to-visit list.
-    async fn one_domain_crawl(&mut self) -> Result<usize, CrawlerError> {
-        let first = self.yet_to_visit.first();
-        if first.is_none() {
-            return Ok(0);
-        }
-
-        // copy the domain of the first URL to owned string
-        let domain = first.unwrap().domain().unwrap().to_owned();
-
-        let mut urls_with_same_domain: Vec<Url> = Vec::new();
-        // filter out all URLs with the same domain - remove them from the yet-to-visit list
-        let mut i = 0;
-        while i < self.yet_to_visit.len() {
-            if self.yet_to_visit[i].domain().unwrap() == domain {
-                urls_with_same_domain.push(self.yet_to_visit.swap_remove(i));
-            } else {
-                i += 1;
+    /// This is the main crawling funciton. Websites are fetched according
+    /// to their order in the yet-to-visit queue. Content in `robots.txt`
+    /// is cached. There is a `MAXIMUM_WEBSITES_PER_DOMAIN` limit for every domain,
+    /// because some domains contain A LOT of websites (news, blogs, wiki...)
+    async fn long_crawl(&mut self) {
+        while let Some(url) = self.yet_to_visit.pop_front() {
+            let domain = url.domain();
+            if domain.is_none() {
+                continue; // we don't want to crawl IP-address-like hosts
             }
-        }
+            let domain = domain.unwrap();
 
-        // fetch and parse robots.txt
-        let robots_url = get_robots_url(format!("https://{}", domain).as_str());
-        if robots_url.is_err() {
-            // error finding robots.txt for this domain
-            // TODO: maybe continue without constrains?
-            return Err(CrawlerError::RobotsTxtError(domain));
-        }
-        let robots_url = Url::parse(robots_url.unwrap().as_str()).unwrap();
-        let robots_txt = self.request_website(&robots_url).await;
-        if robots_txt.is_none() {
-            return Err(CrawlerError::RobotsTxtError(domain));
-        }
-        let robots_txt = robots_txt.unwrap();
-        let robot = Robot::new("alex-observer/0.1.0", robots_txt.as_bytes());
-        if robot.is_err() {
-            // error parsing the robots.txt
-            return Err(CrawlerError::RobotsTxtParseError(domain));
-        }
-        let robot = robot.unwrap();
-
-        // fetch all the urls with the same domain
-        let mut same_domain_counter: usize = 0;
-
-        while let Some(url) = urls_with_same_domain.pop() {
-            if self.counter >= MAXIMUM_CRAWLED_WEBSITES {
-                break; // we've reached maximum number of crawled websites
+            // if we haven't encountered this domain before
+            if !self.domains.contains_key(domain) {
+                let domain_info = DomainInfo {
+                    counter: 0,
+                    robot: self.get_robot_for_domain(&url).await,
+                };
+                self.domains.insert(domain.to_string(), domain_info);
             }
+            let domain_info = self.domains.get(domain).unwrap(); // safe to unwrap
 
-            // important: check if the URL is allowed by robots.txt
-            if !robot.allowed(url.path()) {
+            // crawl this url only when we haven't yet reached domain limit
+            if domain_info.reached_limit() {
+                continue;
+            }
+            // is this url allowed?
+            let url_allowed = match &domain_info.robot {
+                Some(robot) => robot.allowed(url.as_str()),
+                None => true,
+            };
+            if !url_allowed {
                 continue;
             }
 
-            // request the document
+            // perform a request
             println!(
-                "Requesting {} ({} on domain {}) {} ",
-                self.counter,
-                same_domain_counter,
+                "Requesting #{} ({} on domain {}): {} ",
+                self.counter + 1,
+                domain_info.counter + 1,
                 domain,
                 url.path()
             );
@@ -199,11 +191,13 @@ impl Crawler {
                 println!("Failed!");
                 continue;
             }
-            let html = html.unwrap();
+            let html = html.unwrap(); // safe to unwrap
 
-            self.visited.insert(url.as_str().to_string());
+            // update the stats & other variables
+            self.visited.insert(url.to_string());
             self.counter += 1;
-            same_domain_counter += 1;
+            let domain_info = self.domains.get_mut(domain).unwrap(); // save to unwrap
+            domain_info.counter += 1;
 
             // parse the document and iterate over the links
             let (document, links) = find_links(&html, &url);
@@ -211,20 +205,39 @@ impl Crawler {
                 if self.visited.contains(&another_url.to_string()) {
                     continue;
                 }
-                if another_url.domain().unwrap() == domain {
-                    urls_with_same_domain.push(another_url);
-                } else {
-                    self.yet_to_visit.push(another_url);
-                }
+                self.yet_to_visit.push_back(another_url);
             }
-
             process_html_document(html, document);
 
-            // wait some friendly time in between requests
+            // wait some time in between requests
             thread::sleep(REQUEST_DELAY);
         }
+    }
 
-        Ok(same_domain_counter)
+    async fn get_robot_for_domain(&self, url: &Url) -> Option<Robot> {
+        let robots_url = get_robots_url(url.as_str());
+        if robots_url.is_err() {
+            return None;
+        }
+        let robots_url = robots_url.unwrap();
+        let robots_txt = self.request_robots(&robots_url).await;
+        if robots_txt.is_err() {
+            return None;
+        }
+        let robots_txt = robots_txt.unwrap();
+        let robot = Robot::new("alex-observer/0.1.0", robots_txt.as_bytes());
+        if robot.is_err() {
+            // error parsing the robots.txt
+            return None;
+        }
+        Some(robot.unwrap())
+    }
+
+    async fn request_robots(&self, url: &str) -> Result<String, reqwest::Error> {
+        let req = self.client.get(url).header(ACCEPT, "text/plain").build()?;
+        let res = self.client.execute(req).await?;
+        let text = res.text().await?;
+        Ok(text)
     }
 }
 
@@ -235,7 +248,7 @@ fn find_links(html: &str, url: &Url) -> (Html, Vec<Url>) {
     let document = Html::parse_document(html);
     let href_selector = Selector::parse("a").unwrap();
 
-    let domain = url.domain().unwrap();
+    let domain = url.domain().unwrap(); // safe to unwrap
 
     let links = document
         .select(&href_selector)
@@ -305,11 +318,7 @@ async fn main() {
     // startup the crawler
     let mut crawler = Crawler::new();
     crawler.init_crawl(&init_queue).await;
-
-    // now, the main and long loop
-    while crawler.yet_to_visit.len() > 0 && crawler.counter < MAXIMUM_CRAWLED_WEBSITES {
-        _ = crawler.one_domain_crawl().await;
-    }
+    crawler.long_crawl().await;
 
     println!();
     println!("Crawling ended. Websites crawled: {}", crawler.counter);
