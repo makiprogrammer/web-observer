@@ -261,7 +261,7 @@ impl Crawler {
 fn find_links(html: &str, url: &Url) -> (Html, Vec<Url>) {
     // we could also use Regex url pattern, but I think the document parsing is better
     let document = Html::parse_document(html);
-    let href_selector = Selector::parse("a, area, link").unwrap();
+    let href_selector = Selector::parse("body a, body area, body link").unwrap();
 
     let domain = url.domain().unwrap(); // safe to unwrap
 
