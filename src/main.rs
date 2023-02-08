@@ -109,6 +109,10 @@ impl Crawler {
             println!("Requesting startup page #{}: {}", i + 1, startup_url);
             let html = self.request_website(&url).await;
             if html.is_none() {
+                println!(
+                    "Something unexpected happened while loading URL: {}",
+                    startup_url
+                );
                 continue;
             }
             let html = html.unwrap();
@@ -253,11 +257,15 @@ fn find_links(html: &str, url: &Url) -> (Html, Vec<Url>) {
             }
             Some(href.to_string())
         })
-        .map(|url_string| {
-            let mut url = Url::parse(&url_string).expect("should create valid URL");
+        .filter_map(|url_string| {
+            let url = Url::parse(&url_string);
+            if url.is_err() {
+                return None; // invalid URL
+            }
+            let mut url = url.unwrap();
             url.set_fragment(None);
             url.set_query(None);
-            url
+            Some(url)
         })
         .collect();
 
